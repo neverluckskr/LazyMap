@@ -23,14 +23,28 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     /// Статус разрешения на геолокацию.
     @Published var authorizationStatus: CLAuthorizationStatus
 
+    /// Эконом-режим: реже опрашиваем GPS, чтобы беречь заряд (#77).
+    @Published var ecoMode = false {
+        didSet { applyAccuracy() }
+    }
+
     override init() {
         authorizationStatus = manager.authorizationStatus
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = kCLDistanceFilterNone
         manager.activityType = .automotiveNavigation
         manager.pausesLocationUpdatesAutomatically = false
+        applyAccuracy()
+    }
+
+    private func applyAccuracy() {
+        if ecoMode {
+            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            manager.distanceFilter = 25
+        } else {
+            manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            manager.distanceFilter = kCLDistanceFilterNone
+        }
     }
 
     /// Запросить доступ и начать получать обновления.

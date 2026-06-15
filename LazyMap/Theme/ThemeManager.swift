@@ -36,14 +36,49 @@ final class ThemeManager: ObservableObject {
         }
     }
 
+    /// Акцентный цвет приложения (#13).
+    enum Accent: String, CaseIterable, Identifiable {
+        case blue, green, orange, pink, purple, red
+
+        var id: String { rawValue }
+
+        var color: Color {
+            switch self {
+            case .blue:   return .blue
+            case .green:  return .green
+            case .orange: return .orange
+            case .pink:   return .pink
+            case .purple: return .purple
+            case .red:    return .red
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .blue:   return "Синий"
+            case .green:  return "Зелёный"
+            case .orange: return "Оранжевый"
+            case .pink:   return "Розовый"
+            case .purple: return "Фиолетовый"
+            case .red:    return "Красный"
+            }
+        }
+    }
+
     @AppStorage("colorSchemePreference") private var storedValue: String = Preference.system.rawValue
+    @AppStorage("accentColor") private var storedAccent: String = Accent.blue.rawValue
 
     @Published var preference: Preference = .system {
         didSet { storedValue = preference.rawValue }
     }
 
+    @Published var accent: Accent = .blue {
+        didSet { storedAccent = accent.rawValue }
+    }
+
     init() {
         preference = Preference(rawValue: storedValue) ?? .system
+        accent = Accent(rawValue: storedAccent) ?? .blue
     }
 
     /// Переключает темы по кругу: системная → светлая → тёмная → ...

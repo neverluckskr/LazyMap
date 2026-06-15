@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -8,6 +9,8 @@ struct ContentView: View {
     @StateObject private var search = SearchService()
     @StateObject private var scooter = ScooterProfile()
     @StateObject private var trip = TripRecorder()
+    @StateObject private var nearby = NearbyService()
+    @StateObject private var battery = BatteryMonitor()
 
     @State private var camera: MapCameraPosition = .userLocation(
         fallback: .region(
@@ -21,10 +24,13 @@ struct ContentView: View {
     @State private var appearance = MapAppearance()
     @State private var followMode: FollowMode = .off
     @State private var tripStarted = false
+    @State private var themeFlash = 0.0
 
     private var showingPreview: Bool {
         route.destination != nil && !tripStarted
     }
+
+    private var accentColor: Color { theme.accent.color }
 
     var body: some View {
         MapReader { proxy in
@@ -39,11 +45,25 @@ struct ContentView: View {
                                     style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                     }
                 }
-                // Выбранный маршрут — поверх, синим.
                 if let sel = route.selectedRoute {
                     MapPolyline(sel.polyline)
-                        .stroke(.blue,
+                        .stroke(accentColor,
                                 style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                }
+
+                // Места «рядом» (#59) — тапни маркер, чтобы построить маршрут.
+                ForEach(nearby.items) { item in
+                    Annotation(item.name, coordinate: item.coordinate) {
+                        Button { selectNearby(item) } label: {
+                            Image(systemName: item.category.icon)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(item.category.color, in: Circle())
+                                .shadow(radius: 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 if let dest = route.destination {
@@ -57,7 +77,7 @@ struct ContentView: View {
             }
             .mapStyle(appearance.resolvedStyle)
             .mapControls {
-                MapCompass()       // #4 — сброс на север
+                MapCompass()
                 MapScaleView()
             }
             .gesture(longPressGesture(proxy))
@@ -68,6 +88,11 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) { topBar }
         .overlay(alignment: .bottom) { bottomArea }
+        .overlay {
+            // #20 — мягкая вспышка при смене темы.
+            Color.gray.opacity(themeFlash).ignoresSafeArea().allowsHitTesting(false)
+        }
+        .tint(accentColor) // #13 — акцентный цвет приложения
         .onAppear {
             location.start()
             route.scooterSpeedKmh = scooter.speedKmh
@@ -76,6 +101,13 @@ struct ContentView: View {
         .onChange(of: followMode) { _, _ in updateFollowCamera() }
         .onChange(of: route.fitTick) { _, _ in fitRoute() }
         .onChange(of: scooter.speedKmh) { _, v in route.scooterSpeedKmh = v }
+        .onChange(of: tripStarted) { _, on in
+            UIApplication.shared.isIdleTimerDisabled = on // #81 — не гасить экран в поездке
+        }
+        .onChange(of: theme.preference) { _, _ in
+            themeFlash = 0.18
+            withAnimation(.easeOut(duration: 0.45)) { themeFlash = 0 }
+        }
     }
 
     // MARK: - Жест: зажать точку на карте
@@ -88,17 +120,17 @@ struct ContentView: View {
                    let coord = proxy.convert(drag.location, from: .local) {
                     tripStarted = false
                     followMode = .off
+                    nearby.clear()
                     route.setDestination(coord, name: nil, from: location.coordinate)
                 }
             }
     }
 
-    // MARK: - Верхняя панель: поиск + тема + стиль
+    // MARK: - Верхняя панель
 
     private var topBar: some View {
         HStack(alignment: .top, spacing: 8) {
             SearchView(service: search) { item in handleSelect(item) }
-
             MapControlButton(systemName: theme.preference.iconName) {
                 withAnimation { theme.cycle() }
             }
@@ -116,6 +148,11 @@ struct ContentView: View {
                 }
             }
             Toggle("Объекты (кафе, заправки…)", isOn: $appearance.showPOI)
+            Picker("Акцент", selection: accentBinding) {
+                ForEach(ThemeManager.Accent.allCases) { accent in
+                    Label(accent.label, systemImage: "circle.fill").tag(accent)
+                }
+            }
         } label: {
             Image(systemName: "map")
                 .font(.system(size: 18, weight: .semibold))
@@ -126,6 +163,10 @@ struct ContentView: View {
         .buttonBorderShape(.circle)
     }
 
+    private var accentBinding: Binding<ThemeManager.Accent> {
+        Binding(get: { theme.accent }, set: { theme.accent = $0 })
+    }
+
     // MARK: - Нижняя зона
 
     @ViewBuilder
@@ -134,6 +175,7 @@ struct ContentView: View {
             RoutePanel(
                 route: route,
                 profile: scooter,
+                accent: accentColor,
                 onStart: { withAnimation { tripStarted = true; followMode = .headingUp; trip.start(); updateFollowCamera() } },
                 onCancel: { withAnimation { route.clear() } },
                 onRecalculate: { if let c = location.coordinate { route.recalculate(from: c) } },
@@ -148,8 +190,13 @@ struct ContentView: View {
                 if location.authorizationStatus == .denied || location.authorizationStatus == .restricted {
                     permissionBanner
                 }
+                if battery.isLow && !location.ecoMode {
+                    lowBatteryBanner
+                }
                 if tripStarted {
                     tripStatsBar
+                } else {
+                    nearbyChips
                 }
                 HStack(alignment: .bottom) {
                     SpeedBadge(speedKmh: location.speedKmh)
@@ -162,16 +209,25 @@ struct ContentView: View {
         }
     }
 
-    private var followButton: some View {
-        MapControlButton(systemName: followMode.iconName) {
-            withAnimation {
-                followMode = followMode.next()
-                if followMode == .off { centerOnUser() }
+    /// #59 — чипсы категорий «рядом».
+    private var nearbyChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(NearbyCategory.allCases) { cat in
+                    Button { toggleNearby(cat) } label: {
+                        Label(cat.label, systemImage: cat.icon)
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.glass)
+                    .tint(nearby.active == cat ? cat.color : nil)
+                }
             }
+            .padding(.horizontal, 2)
         }
     }
 
-    /// Строка статистики поездки: время · средняя · макс (#43, #44, #46).
     private var tripStatsBar: some View {
         HStack(spacing: 0) {
             tripStat(trip.elapsedText, "время")
@@ -199,6 +255,15 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var followButton: some View {
+        MapControlButton(systemName: followMode.iconName) {
+            withAnimation {
+                followMode = followMode.next()
+                if followMode == .off { centerOnUser() }
+            }
+        }
+    }
+
     private var endTripButton: some View {
         Button {
             withAnimation { route.clear(); tripStarted = false; followMode = .off; trip.stop() }
@@ -221,23 +286,56 @@ struct ContentView: View {
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
+    /// #77 — предложение эконом-режима при низком заряде.
+    private var lowBatteryBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "battery.25")
+                .foregroundStyle(.red)
+            Text("Низкий заряд (\(Int(battery.level * 100))%)")
+                .font(.subheadline)
+            Spacer()
+            Button("Эконом") { withAnimation { location.ecoMode = true } }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: Capsule())
+    }
+
     // MARK: - Логика
 
     private func handleSelect(_ item: MKMapItem) {
         tripStarted = false
         followMode = .off
+        nearby.clear()
         route.setDestination(item.placemark.coordinate, name: item.name, from: location.coordinate)
+    }
+
+    private func selectNearby(_ item: NearbyItem) {
+        tripStarted = false
+        followMode = .off
+        route.setDestination(item.coordinate, name: item.name, from: location.coordinate)
+        nearby.clear()
+    }
+
+    private func toggleNearby(_ cat: NearbyCategory) {
+        nearby.toggle(cat, around: location.coordinate)
+        if nearby.active != nil, let c = location.coordinate {
+            followMode = .off
+            withAnimation {
+                camera = .region(MKCoordinateRegion(center: c, latitudinalMeters: 4000, longitudinalMeters: 4000))
+            }
+        }
     }
 
     private func handleLocationUpdate() {
         updateFollowCamera()
 
-        // Статистика поездки (#43, #44, #46).
         if trip.isRecording {
             trip.update(speedKmh: location.speedKmh, coordinate: location.coordinate)
         }
 
-        // #35 — пересчёт при сходе с маршрута во время поездки.
         if tripStarted, !route.isCalculating, let c = location.coordinate, route.isOffRoute(c) {
             route.recalculate(from: c)
         }
@@ -265,7 +363,6 @@ struct ContentView: View {
         return 300 + (clamped / 60) * 1500
     }
 
-    /// #38-подобно — вписать выбранный маршрут в экран.
     private func fitRoute() {
         guard let rect = route.selectedRoute?.polyline.boundingMapRect else { return }
         let padded = rect.insetBy(dx: -rect.size.width * 0.25, dy: -rect.size.height * 0.25)

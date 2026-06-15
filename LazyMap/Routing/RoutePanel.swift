@@ -5,6 +5,7 @@ import MapKit
 struct RoutePanel: View {
     @ObservedObject var route: RouteService
     @ObservedObject var profile: ScooterProfile
+    var accent: Color = .blue
     var onStart: () -> Void
     var onCancel: () -> Void
     var onRecalculate: () -> Void
@@ -86,7 +87,7 @@ struct RoutePanel: View {
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.glass)
-                        .tint(idx == route.selectedIndex ? .blue : nil)
+                        .tint(idx == route.selectedIndex ? accent : nil)
                     }
                 }
             }
@@ -123,7 +124,7 @@ struct RoutePanel: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 8)
             }
             .buttonStyle(.glassProminent)
-            .tint(.blue)
+            .tint(accent)
         }
     }
 
@@ -193,7 +194,7 @@ struct RoutePanel: View {
                 .padding(.vertical, 8)
         }
         .buttonStyle(.glass)
-        .tint(isOn ? .blue : nil)
+        .tint(isOn ? accent : nil)
     }
 
     @ViewBuilder
