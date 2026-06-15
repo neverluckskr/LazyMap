@@ -4,11 +4,14 @@ import MapKit
 /// Нижняя панель маршрута (как в Waze): ETA, альтернативы, настройки, шаги.
 struct RoutePanel: View {
     @ObservedObject var route: RouteService
+    @ObservedObject var profile: ScooterProfile
     var onStart: () -> Void
     var onCancel: () -> Void
     var onRecalculate: () -> Void
+    var onTransportChange: (TransportMode) -> Void
 
     @State private var expanded = false
+    @State private var showingScooterSettings = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -40,12 +43,24 @@ struct RoutePanel: View {
                     else if value.translation.height > 30 { withAnimation { expanded = false } }
                 }
         )
+        .sheet(isPresented: $showingScooterSettings) {
+            ScooterSettingsView(profile: profile)
+                .presentationDetents([.medium])
+        }
     }
 
     @ViewBuilder
     private func content(_ sel: MKRoute) -> some View {
         if let name = route.destinationName {
             Text(name).font(.headline).lineLimit(1)
+        }
+
+        // Режим транспорта (#36)
+        transportSelector
+
+        // Углублённая инфа по самокату (#36)
+        if route.transport == .scooter {
+            scooterCard(sel)
         }
 
         // Время · расстояние · прибытие (#34)
@@ -110,6 +125,57 @@ struct RoutePanel: View {
             .buttonStyle(.glassProminent)
             .tint(.blue)
         }
+    }
+
+    /// Переключатель транспорта (#36).
+    private var transportSelector: some View {
+        HStack(spacing: 8) {
+            ForEach(TransportMode.allCases) { mode in
+                Button {
+                    onTransportChange(mode)
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: mode.iconName).font(.system(size: 16, weight: .semibold))
+                        Text(mode.label).font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.glass)
+                .tint(route.transport == mode ? .blue : nil)
+            }
+        }
+    }
+
+    /// Самокатная карточка: запас хода и расход заряда (#36).
+    private func scooterCard(_ sel: MKRoute) -> some View {
+        let km = sel.distance / 1000
+        let enough = profile.isEnough(forKm: km)
+        let cost = profile.batteryCost(forKm: km)
+        return HStack(spacing: 12) {
+            Image(systemName: enough ? "bolt.fill" : "bolt.slash.fill")
+                .font(.title3)
+                .foregroundStyle(enough ? .green : .red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(enough ? "Заряда хватит" : "Заряда может не хватить")
+                    .font(.subheadline.weight(.semibold))
+                Text("Запас ~\(Int(profile.usableRangeKm)) км · потратишь ~\(Int(cost))% · заряд \(Int(profile.batteryPercent))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { showingScooterSettings = true } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+        }
+        .padding(12)
+        .glassEffect(enough ? Glass.regular : Glass.regular.tint(.red.opacity(0.25)),
+                     in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

@@ -23,6 +23,10 @@ final class RouteService: ObservableObject {
     @Published var avoidTolls = false
     @Published var avoidHighways = false
 
+    // #36 — режим транспорта и скорость самоката для расчёта времени
+    @Published var transport: TransportMode = .scooter
+    @Published var scooterSpeedKmh: Double = 20
+
     /// Сигнал «вписать маршрут в экран» (растёт при новом расчёте/смене маршрута).
     @Published var fitTick = 0
 
@@ -63,7 +67,7 @@ final class RouteService: ObservableObject {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: dest))
-        request.transportType = .automobile
+        request.transportType = transport.mkType                     // #36
         request.requestsAlternateRoutes = true                       // #23
         request.tollPreference = avoidTolls ? .avoid : .any          // #24
         request.highwayPreference = avoidHighways ? .avoid : .any    // #24
@@ -107,15 +111,23 @@ final class RouteService: ObservableObject {
         return km >= 10 ? String(format: "%.0f км", km) : String(format: "%.1f км", km)
     }
 
+    /// Время в пути с учётом режима: для самоката — по своей скорости (#36).
+    func travelTime(_ route: MKRoute) -> TimeInterval {
+        if transport.usesCustomSpeed, scooterSpeedKmh > 0 {
+            return route.distance / (scooterSpeedKmh * 1000 / 3600)
+        }
+        return route.expectedTravelTime
+    }
+
     func durationText(_ route: MKRoute) -> String {
-        let minutes = Int((route.expectedTravelTime / 60).rounded())
+        let minutes = Int((travelTime(route) / 60).rounded())
         if minutes >= 60 { return "\(minutes / 60) ч \(minutes % 60) мин" }
         return "\(max(minutes, 1)) мин"
     }
 
     /// #34 — время прибытия (во сколько приедешь).
     func arrivalText(_ route: MKRoute) -> String {
-        let arrival = Date().addingTimeInterval(route.expectedTravelTime)
+        let arrival = Date().addingTimeInterval(travelTime(route))
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: arrival)

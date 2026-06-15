@@ -6,6 +6,7 @@ struct ContentView: View {
     @EnvironmentObject private var location: LocationManager
     @StateObject private var route = RouteService()
     @StateObject private var search = SearchService()
+    @StateObject private var scooter = ScooterProfile()
 
     @State private var camera: MapCameraPosition = .userLocation(
         fallback: .region(
@@ -66,10 +67,14 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) { topBar }
         .overlay(alignment: .bottom) { bottomArea }
-        .onAppear { location.start() }
+        .onAppear {
+            location.start()
+            route.scooterSpeedKmh = scooter.speedKmh
+        }
         .onChange(of: location.updateTick) { _, _ in handleLocationUpdate() }
         .onChange(of: followMode) { _, _ in updateFollowCamera() }
         .onChange(of: route.fitTick) { _, _ in fitRoute() }
+        .onChange(of: scooter.speedKmh) { _, v in route.scooterSpeedKmh = v }
     }
 
     // MARK: - Жест: зажать точку на карте
@@ -127,9 +132,14 @@ struct ContentView: View {
         if showingPreview {
             RoutePanel(
                 route: route,
+                profile: scooter,
                 onStart: { withAnimation { tripStarted = true; followMode = .headingUp; updateFollowCamera() } },
                 onCancel: { withAnimation { route.clear() } },
-                onRecalculate: { if let c = location.coordinate { route.recalculate(from: c) } }
+                onRecalculate: { if let c = location.coordinate { route.recalculate(from: c) } },
+                onTransportChange: { mode in
+                    route.transport = mode
+                    if let c = location.coordinate { route.recalculate(from: c) }
+                }
             )
             .transition(.move(edge: .bottom).combined(with: .opacity))
         } else {
