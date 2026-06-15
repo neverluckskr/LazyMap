@@ -44,7 +44,18 @@ struct ContentView: View {
     private var recenterButton: some View {
         MapControlButton(systemName: "location.fill") {
             withAnimation {
-                camera = .userLocation(fallback: camera)
+                if let coord = location.coordinate {
+                    camera = .region(
+                        MKCoordinateRegion(
+                            center: coord,
+                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                        )
+                    )
+                } else {
+                    // Нет фикса позиции — попросим систему и попробуем встать на пользователя.
+                    location.start()
+                    camera = .userLocation(fallback: camera)
+                }
             }
         }
         .padding(.trailing, 16)

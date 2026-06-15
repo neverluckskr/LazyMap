@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Круглая кнопка-иконка для оверлеев поверх карты (тема, центрирование и т.д.).
-/// Нативный Liquid Glass (iOS 26): интерактивное стекло реагирует на нажатие.
+/// Использует нативный стеклянный стиль кнопки (iOS 26) — он сам рисует Liquid Glass
+/// и делает кликабельным весь круг.
 struct MapControlButton: View {
     let systemName: String
     var action: () -> Void
@@ -11,9 +12,10 @@ struct MapControlButton: View {
             Image(systemName: systemName)
                 .font(.system(size: 18, weight: .semibold))
                 .frame(width: 50, height: 50)
-                .glassEffect(.regular.interactive(), in: .circle)
+                .contentShape(.circle)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
     }
 }
 
