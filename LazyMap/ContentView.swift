@@ -4,6 +4,7 @@ import MapKit
 struct ContentView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var location: LocationManager
+    @StateObject private var route = RouteService()
 
     @State private var camera: MapCameraPosition = .userLocation(
         fallback: .region(
@@ -14,21 +15,59 @@ struct ContentView: View {
         )
     )
 
+    /// Поездка начата (панель предпросмотра скрыта, показываем спидометр).
+    @State private var tripStarted = false
+
+    /// Показывать панель предпросмотра маршрута?
+    private var showingPreview: Bool {
+        route.destination != nil && !tripStarted
+    }
+
     var body: some View {
-        Map(position: $camera) {
-            UserAnnotation()
+        MapReader { proxy in
+            Map(position: $camera) {
+                UserAnnotation()
+
+                if let dest = route.destination {
+                    Annotation("Точка Б", coordinate: dest) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(.red)
+                            .shadow(radius: 3)
+                    }
+                }
+
+                if let line = route.route {
+                    MapPolyline(line.polyline)
+                        .stroke(.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .mapStyle(.standard(elevation: .flat))
+            .mapControls {
+                MapCompass()
+                MapScaleView()
+            }
+            .gesture(longPressGesture(proxy))
+            .ignoresSafeArea()
         }
-        .mapStyle(.standard(elevation: .flat))
-        .mapControls {
-            MapCompass()
-            MapScaleView()
-        }
-        .ignoresSafeArea()
         .overlay(alignment: .topTrailing) { themeButton }
-        .overlay(alignment: .bottomTrailing) { recenterButton }
-        .overlay(alignment: .bottomLeading) { speedBadge }
         .overlay(alignment: .top) { permissionBanner }
+        .overlay(alignment: .bottom) { bottomArea }
         .onAppear { location.start() }
+    }
+
+    // MARK: - Жест: зажать точку на карте
+
+    private func longPressGesture(_ proxy: MapProxy) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.6)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            .onEnded { value in
+                if case .second(true, let drag?) = value,
+                   let coord = proxy.convert(drag.location, from: .local) {
+                    tripStarted = false
+                    route.setDestination(coord, from: location.coordinate)
+                }
+            }
     }
 
     // MARK: - Оверлеи
@@ -41,31 +80,52 @@ struct ContentView: View {
         .padding(.trailing, 16)
     }
 
-    private var recenterButton: some View {
-        MapControlButton(systemName: "location.fill") {
-            withAnimation {
-                if let coord = location.coordinate {
-                    camera = .region(
-                        MKCoordinateRegion(
-                            center: coord,
-                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                        )
-                    )
+    /// Нижняя зона: либо панель маршрута, либо спидометр + кнопки.
+    @ViewBuilder
+    private var bottomArea: some View {
+        if showingPreview {
+            RoutePanel(
+                distanceText: route.distanceText,
+                durationText: route.durationText,
+                isCalculating: route.isCalculating,
+                errorMessage: route.errorMessage,
+                onStart: { withAnimation { tripStarted = true } },
+                onCancel: { withAnimation { route.clear() } }
+            )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            HStack(alignment: .bottom) {
+                SpeedBadge(speedKmh: location.speedKmh)
+                Spacer()
+                if tripStarted {
+                    endTripButton
                 } else {
-                    // Нет фикса позиции — попросим систему и попробуем встать на пользователя.
-                    location.start()
-                    camera = .userLocation(fallback: camera)
+                    recenterButton
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
         }
-        .padding(.trailing, 16)
-        .padding(.bottom, 32)
     }
 
-    private var speedBadge: some View {
-        SpeedBadge(speedKmh: location.speedKmh)
-            .padding(.leading, 16)
-            .padding(.bottom, 32)
+    private var recenterButton: some View {
+        MapControlButton(systemName: "location.fill") {
+            withAnimation { centerOnUser() }
+        }
+    }
+
+    private var endTripButton: some View {
+        Button {
+            withAnimation { route.clear(); tripStarted = false }
+        } label: {
+            Label("Завершить", systemImage: "xmark")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+        }
+        .buttonStyle(.glassProminent)
+        .tint(.red)
+        .buttonBorderShape(.capsule)
     }
 
     @ViewBuilder
@@ -78,6 +138,22 @@ struct ContentView: View {
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
+        }
+    }
+
+    // MARK: - Помощники
+
+    private func centerOnUser() {
+        if let coord = location.coordinate {
+            camera = .region(
+                MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                )
+            )
+        } else {
+            location.start()
+            camera = .userLocation(fallback: camera)
         }
     }
 }
