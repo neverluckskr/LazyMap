@@ -7,6 +7,7 @@ struct ContentView: View {
     @StateObject private var route = RouteService()
     @StateObject private var search = SearchService()
     @StateObject private var scooter = ScooterProfile()
+    @StateObject private var trip = TripRecorder()
 
     @State private var camera: MapCameraPosition = .userLocation(
         fallback: .region(
@@ -133,7 +134,7 @@ struct ContentView: View {
             RoutePanel(
                 route: route,
                 profile: scooter,
-                onStart: { withAnimation { tripStarted = true; followMode = .headingUp; updateFollowCamera() } },
+                onStart: { withAnimation { tripStarted = true; followMode = .headingUp; trip.start(); updateFollowCamera() } },
                 onCancel: { withAnimation { route.clear() } },
                 onRecalculate: { if let c = location.coordinate { route.recalculate(from: c) } },
                 onTransportChange: { mode in
@@ -143,9 +144,12 @@ struct ContentView: View {
             )
             .transition(.move(edge: .bottom).combined(with: .opacity))
         } else {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 if location.authorizationStatus == .denied || location.authorizationStatus == .restricted {
                     permissionBanner
+                }
+                if tripStarted {
+                    tripStatsBar
                 }
                 HStack(alignment: .bottom) {
                     SpeedBadge(speedKmh: location.speedKmh)
@@ -167,9 +171,37 @@ struct ContentView: View {
         }
     }
 
+    /// Строка статистики поездки: время · средняя · макс (#43, #44, #46).
+    private var tripStatsBar: some View {
+        HStack(spacing: 0) {
+            tripStat(trip.elapsedText, "время")
+            Divider().frame(height: 30)
+            tripStat(trip.distanceText, "путь")
+            Divider().frame(height: 30)
+            tripStat(String(format: "%.0f", trip.avgSpeedKmh), "ср. км/ч")
+            Divider().frame(height: 30)
+            tripStat(String(format: "%.0f", trip.maxSpeedKmh), "макс км/ч")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: Capsule())
+    }
+
+    private func tripStat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .monospacedDigit()
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var endTripButton: some View {
         Button {
-            withAnimation { route.clear(); tripStarted = false; followMode = .off }
+            withAnimation { route.clear(); tripStarted = false; followMode = .off; trip.stop() }
         } label: {
             Label("Завершить", systemImage: "xmark")
                 .font(.subheadline.weight(.semibold))
@@ -199,6 +231,12 @@ struct ContentView: View {
 
     private func handleLocationUpdate() {
         updateFollowCamera()
+
+        // Статистика поездки (#43, #44, #46).
+        if trip.isRecording {
+            trip.update(speedKmh: location.speedKmh, coordinate: location.coordinate)
+        }
+
         // #35 — пересчёт при сходе с маршрута во время поездки.
         if tripStarted, !route.isCalculating, let c = location.coordinate, route.isOffRoute(c) {
             route.recalculate(from: c)
