@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Настройки самоката: крейсерская скорость, запас хода, текущий заряд.
+/// Настройки самоката: модель, крейсерская скорость, запас хода, текущий заряд.
 struct ScooterSettingsView: View {
     @ObservedObject var profile: ScooterProfile
     @Environment(\.dismiss) private var dismiss
@@ -8,17 +8,41 @@ struct ScooterSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Мой самокат") {
+                    LabeledContent("Модель", value: profile.model.name)
+                    LabeledContent("Макс. скорость", value: "\(Int(profile.model.maxSpeedKmh)) км/ч")
+                    LabeledContent("Запас хода", value: "до \(Int(profile.model.rangeKm)) км")
+                    LabeledContent("Мотор", value: profile.model.motor)
+                    LabeledContent("Батарея", value: profile.model.battery)
+                    LabeledContent("Колёса", value: profile.model.wheels)
+                    LabeledContent("Макс. нагрузка", value: "\(profile.model.maxLoadKg) кг")
+                }
+
                 Section("Крейсерская скорость") {
-                    sliderRow(value: $profile.speedKmh, range: 5...40, unit: "км/ч")
-                }
-                Section("Запас хода (полный заряд)") {
-                    sliderRow(value: $profile.rangeKm, range: 5...80, unit: "км")
-                }
-                Section("Текущий заряд") {
-                    sliderRow(value: $profile.batteryPercent, range: 0...100, unit: "%")
-                    Text("Реальный запас сейчас: ~\(Int(profile.usableRangeKm)) км")
+                    sliderRow(value: $profile.speedKmh, range: 5...profile.model.maxSpeedKmh, unit: "км/ч")
+                    Text("Для расчёта времени в пути. Не максимум, а комфортная скорость езды.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("Запас хода (полный заряд)") {
+                    sliderRow(value: $profile.rangeKm, range: 10...100, unit: "км")
+                }
+
+                Section("Текущий заряд") {
+                    sliderRow(value: $profile.batteryPercent, range: 0...100, unit: "%")
+                    LabeledContent("Реальный запас сейчас", value: "~\(Int(profile.usableRangeKm)) км")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Реальный пробег ~85% от паспортного — учитываем вес, рельеф и ветер.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Button("Сбросить под \(profile.model.name)") {
+                        withAnimation { profile.resetToModel() }
+                    }
                 }
             }
             .navigationTitle("Мой самокат")
