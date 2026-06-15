@@ -5,6 +5,10 @@ struct ContentView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var location: LocationManager
     @StateObject private var route = RouteService()
+    @StateObject private var poi = POIService()
+
+    /// Последняя видимая область карты (для подгрузки POI).
+    @State private var visibleRegion: MKCoordinateRegion?
 
     @State private var camera: MapCameraPosition = .userLocation(
         fallback: .region(
@@ -33,6 +37,13 @@ struct ContentView: View {
             Map(position: $camera) {
                 UserAnnotation()
 
+                if appearance.showPOI {
+                    ForEach(poi.items) { item in
+                        Marker(item.name, systemImage: item.iconName, coordinate: item.coordinate)
+                            .tint(item.color)
+                    }
+                }
+
                 if let dest = route.destination {
                     Annotation("Точка Б", coordinate: dest) {
                         Image(systemName: "mappin.circle.fill")
@@ -54,6 +65,10 @@ struct ContentView: View {
             }
             .gesture(longPressGesture(proxy))
             .ignoresSafeArea()
+            .onMapCameraChange(frequency: .onEnd) { context in
+                visibleRegion = context.region
+                poi.update(for: context.region, enabled: appearance.showPOI)
+            }
         }
         .overlay(alignment: .topTrailing) { topControls }
         .overlay(alignment: .top) { permissionBanner }
@@ -62,6 +77,12 @@ struct ContentView: View {
         // Двигаем камеру при каждом обновлении GPS, если включён режим следования.
         .onChange(of: location.updateTick) { _, _ in updateFollowCamera() }
         .onChange(of: followMode) { _, _ in updateFollowCamera() }
+        // Перезагрузить POI при включении/выключении слоя.
+        .onChange(of: appearance.showPOI) { _, _ in
+            if let region = visibleRegion {
+                poi.update(for: region, enabled: appearance.showPOI)
+            }
+        }
     }
 
     // MARK: - Жест: зажать точку на карте
@@ -100,7 +121,6 @@ struct ContentView: View {
                     Label(choice.label, systemImage: choice.iconName).tag(choice)
                 }
             }
-            Toggle("3D-здания", isOn: $appearance.show3D)
             Toggle("Объекты (кафе, заправки…)", isOn: $appearance.showPOI)
         } label: {
             Image(systemName: "map")
@@ -194,7 +214,7 @@ struct ContentView: View {
                 centerCoordinate: coord,
                 distance: distanceForSpeed(location.speedKmh),
                 heading: location.course,
-                pitch: appearance.show3D ? 45 : 0
+                pitch: 0
             ))
         }
     }

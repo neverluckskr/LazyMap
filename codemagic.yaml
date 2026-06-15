@@ -11,6 +11,9 @@ workflows:
       - name: Install XcodeGen
         script: brew install xcodegen
 
+      - name: Resize app icon to 1024x1024
+        script: sips -z 1024 1024 LazyMap/Assets.xcassets/AppIcon.appiconset/icon.png
+
       - name: Generate Xcode project
         script: xcodegen generate
 
