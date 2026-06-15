@@ -2,27 +2,39 @@ import Foundation
 import MapKit
 import Combine
 
-/// Считает автомобильный маршрут от точки А (пользователь) до точки Б (зажатая на карте).
-/// Даёт линию маршрута, расстояние и время в пути.
+/// Считает автомобильный маршрут от точки А (пользователь) до точки Б.
+/// Поддерживает альтернативные маршруты (#23), тип маршрута (#24),
+/// ETA (#34) и проверку схода с пути (#35).
 @MainActor
 final class RouteService: ObservableObject {
 
-    /// Точка назначения (точка Б). nil = маршрута нет.
     @Published var destination: CLLocationCoordinate2D?
+    @Published var destinationName: String?
 
-    /// Построенный маршрут (линия + метаданные).
-    @Published var route: MKRoute?
+    /// Все найденные маршруты (первый — рекомендованный).
+    @Published var routes: [MKRoute] = []
+    /// Индекс выбранного маршрута.
+    @Published var selectedIndex: Int = 0
 
-    /// Идёт расчёт маршрута.
     @Published var isCalculating = false
-
-    /// Текст ошибки, если маршрут не удалось построить.
     @Published var errorMessage: String?
 
-    /// Поставить точку Б и запустить расчёт от текущей позиции.
-    func setDestination(_ coord: CLLocationCoordinate2D, from origin: CLLocationCoordinate2D?) {
+    // #24 — настройки маршрута
+    @Published var avoidTolls = false
+    @Published var avoidHighways = false
+
+    /// Сигнал «вписать маршрут в экран» (растёт при новом расчёте/смене маршрута).
+    @Published var fitTick = 0
+
+    var selectedRoute: MKRoute? {
+        routes.indices.contains(selectedIndex) ? routes[selectedIndex] : nil
+    }
+
+    func setDestination(_ coord: CLLocationCoordinate2D, name: String?, from origin: CLLocationCoordinate2D?) {
         destination = coord
-        route = nil
+        destinationName = name
+        routes = []
+        selectedIndex = 0
         errorMessage = nil
 
         guard let origin else {
@@ -32,10 +44,17 @@ final class RouteService: ObservableObject {
         calculate(from: origin, to: coord)
     }
 
-    /// Сбросить маршрут.
+    /// Пересчитать (смена настроек или сход с маршрута).
+    func recalculate(from origin: CLLocationCoordinate2D) {
+        guard let dest = destination else { return }
+        calculate(from: origin, to: dest)
+    }
+
     func clear() {
         destination = nil
-        route = nil
+        destinationName = nil
+        routes = []
+        selectedIndex = 0
         errorMessage = nil
         isCalculating = false
     }
@@ -45,6 +64,9 @@ final class RouteService: ObservableObject {
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: dest))
         request.transportType = .automobile
+        request.requestsAlternateRoutes = true                       // #23
+        request.tollPreference = avoidTolls ? .avoid : .any          // #24
+        request.highwayPreference = avoidHighways ? .avoid : .any    // #24
 
         isCalculating = true
         let directions = MKDirections(request: request)
@@ -53,28 +75,49 @@ final class RouteService: ObservableObject {
             defer { isCalculating = false }
             do {
                 let response = try await directions.calculate()
-                route = response.routes.first
-                if route == nil { errorMessage = "Маршрут не найден." }
+                routes = response.routes
+                selectedIndex = 0
+                if routes.isEmpty {
+                    errorMessage = "Маршрут не найден."
+                } else {
+                    fitTick &+= 1
+                }
             } catch {
                 errorMessage = "Не удалось построить маршрут."
             }
         }
     }
 
-    /// Расстояние строкой: "8.4 км" или "23 км".
-    var distanceText: String? {
-        guard let route else { return nil }
+    /// #35 — съехал ли пользователь с выбранного маршрута дальше порога.
+    func isOffRoute(_ coord: CLLocationCoordinate2D, threshold: CLLocationDistance = 60) -> Bool {
+        guard let line = selectedRoute?.polyline else { return false }
+        let user = MKMapPoint(coord)
+        let points = line.points()
+        var minDist = Double.greatestFiniteMagnitude
+        for i in 0..<line.pointCount {
+            minDist = min(minDist, user.distance(to: points[i]))
+        }
+        return minDist > threshold
+    }
+
+    // MARK: - Форматирование
+
+    func distanceText(_ route: MKRoute) -> String {
         let km = route.distance / 1000
         return km >= 10 ? String(format: "%.0f км", km) : String(format: "%.1f км", km)
     }
 
-    /// Время в пути строкой: "12 мин" или "1 ч 30 мин".
-    var durationText: String? {
-        guard let route else { return nil }
+    func durationText(_ route: MKRoute) -> String {
         let minutes = Int((route.expectedTravelTime / 60).rounded())
-        if minutes >= 60 {
-            return "\(minutes / 60) ч \(minutes % 60) мин"
-        }
+        if minutes >= 60 { return "\(minutes / 60) ч \(minutes % 60) мин" }
         return "\(max(minutes, 1)) мин"
+    }
+
+    /// #34 — время прибытия (во сколько приедешь).
+    func arrivalText(_ route: MKRoute) -> String {
+        let arrival = Date().addingTimeInterval(route.expectedTravelTime)
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: arrival)
     }
 }

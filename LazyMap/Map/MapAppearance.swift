@@ -46,16 +46,16 @@ enum FollowMode: CaseIterable {
     }
 }
 
-/// Собирает итоговый MapStyle. Системные POI выключены — свои метки (POIService)
-/// показываем сами с раннего зума (#8).
+/// Собирает итоговый MapStyle с системными метками Apple MapKit (#8).
 struct MapAppearance {
     var style: MapStyleChoice = .standard
-    var showPOI: Bool = true   // #8 объекты на карте (свой слой меток)
+    var showPOI: Bool = true   // #8 объекты на карте (системные метки)
 
     var resolvedStyle: MapStyle {
+        let poi: PointOfInterestCategories = showPOI ? .all : .excludingAll
         switch style {
         case .standard:
-            return .standard(elevation: .flat, pointsOfInterest: .excludingAll)
+            return .standard(elevation: .flat, pointsOfInterest: poi)
         case .satellite:
             return .imagery(elevation: .flat)
         }
