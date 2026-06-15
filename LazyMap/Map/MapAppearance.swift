@@ -65,7 +65,7 @@ struct MapAppearance {
         case .standard:
             return .standard(elevation: elevation, pointsOfInterest: poi)
         case .muted:
-            return .standard(elevation: elevation, pointsOfInterest: poi, emphasis: .muted)
+            return .standard(elevation: elevation, emphasis: .muted, pointsOfInterest: poi)
         case .satellite:
             return .imagery(elevation: elevation)
         case .hybrid:
