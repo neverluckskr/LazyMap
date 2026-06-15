@@ -15,10 +15,15 @@ struct ContentView: View {
         )
     )
 
+    /// Внешний вид карты (тип, 3D, POI).
+    @State private var appearance = MapAppearance()
+
+    /// Режим следования камеры за пользователем.
+    @State private var followMode: FollowMode = .off
+
     /// Поездка начата (панель предпросмотра скрыта, показываем спидометр).
     @State private var tripStarted = false
 
-    /// Показывать панель предпросмотра маршрута?
     private var showingPreview: Bool {
         route.destination != nil && !tripStarted
     }
@@ -42,18 +47,21 @@ struct ContentView: View {
                         .stroke(.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
                 }
             }
-            .mapStyle(.standard(elevation: .flat))
+            .mapStyle(appearance.resolvedStyle)
             .mapControls {
-                MapCompass()
+                MapCompass()       // #4 — сброс на север
                 MapScaleView()
             }
             .gesture(longPressGesture(proxy))
             .ignoresSafeArea()
         }
-        .overlay(alignment: .topTrailing) { themeButton }
+        .overlay(alignment: .topTrailing) { topControls }
         .overlay(alignment: .top) { permissionBanner }
         .overlay(alignment: .bottom) { bottomArea }
         .onAppear { location.start() }
+        // Двигаем камеру при каждом обновлении GPS, если включён режим следования.
+        .onChange(of: location.updateTick) { _, _ in updateFollowCamera() }
+        .onChange(of: followMode) { _, _ in updateFollowCamera() }
     }
 
     // MARK: - Жест: зажать точку на карте
@@ -65,22 +73,47 @@ struct ContentView: View {
                 if case .second(true, let drag?) = value,
                    let coord = proxy.convert(drag.location, from: .local) {
                     tripStarted = false
+                    followMode = .off
                     route.setDestination(coord, from: location.coordinate)
                 }
             }
     }
 
-    // MARK: - Оверлеи
+    // MARK: - Верхние кнопки (тема + стиль карты)
 
-    private var themeButton: some View {
-        MapControlButton(systemName: theme.preference.iconName) {
-            withAnimation { theme.cycle() }
+    private var topControls: some View {
+        VStack(spacing: 12) {
+            MapControlButton(systemName: theme.preference.iconName) {
+                withAnimation { theme.cycle() }
+            }
+            mapStyleMenu
         }
         .padding(.top, 8)
         .padding(.trailing, 16)
     }
 
-    /// Нижняя зона: либо панель маршрута, либо спидометр + кнопки.
+    /// Меню выбора типа карты, 3D и POI (#1, #2, #8, #14).
+    private var mapStyleMenu: some View {
+        Menu {
+            Picker("Тип карты", selection: $appearance.style) {
+                ForEach(MapStyleChoice.allCases) { choice in
+                    Label(choice.label, systemImage: choice.iconName).tag(choice)
+                }
+            }
+            Toggle("3D-здания", isOn: $appearance.show3D)
+            Toggle("Объекты (кафе, заправки…)", isOn: $appearance.showPOI)
+        } label: {
+            Image(systemName: "map")
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 50, height: 50)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+    }
+
+    // MARK: - Нижняя зона
+
     @ViewBuilder
     private var bottomArea: some View {
         if showingPreview {
@@ -100,7 +133,7 @@ struct ContentView: View {
                 if tripStarted {
                     endTripButton
                 } else {
-                    recenterButton
+                    followButton
                 }
             }
             .padding(.horizontal, 16)
@@ -108,9 +141,13 @@ struct ContentView: View {
         }
     }
 
-    private var recenterButton: some View {
-        MapControlButton(systemName: "location.fill") {
-            withAnimation { centerOnUser() }
+    /// Кнопка режима следования: off → север сверху → по движению (#5, #6).
+    private var followButton: some View {
+        MapControlButton(systemName: followMode.iconName) {
+            withAnimation {
+                followMode = followMode.next()
+                if followMode == .off { centerOnUser() }
+            }
         }
     }
 
@@ -141,7 +178,32 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Помощники
+    // MARK: - Камера
+
+    /// Обновляет камеру в режиме следования (вызывается на каждый GPS-тик).
+    private func updateFollowCamera() {
+        guard followMode != .off, let coord = location.coordinate else { return }
+        switch followMode {
+        case .off:
+            break
+        case .northUp:
+            camera = .camera(MapCamera(centerCoordinate: coord, distance: 1200, heading: 0, pitch: 0))
+        case .headingUp:
+            // #5 поворот по движению + #6 авто-зум по скорости.
+            camera = .camera(MapCamera(
+                centerCoordinate: coord,
+                distance: distanceForSpeed(location.speedKmh),
+                heading: location.course,
+                pitch: appearance.show3D ? 45 : 0
+            ))
+        }
+    }
+
+    /// #6 — авто-зум: медленно → ближе, быстро → дальше.
+    private func distanceForSpeed(_ kmh: Double) -> Double {
+        let clamped = min(max(kmh, 0), 60)
+        return 300 + (clamped / 60) * 1500   // 300 м (стоим) → 1800 м (60+ км/ч)
+    }
 
     private func centerOnUser() {
         if let coord = location.coordinate {

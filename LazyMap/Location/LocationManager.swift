@@ -14,6 +14,12 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     /// Текущая скорость в км/ч (0, если стоим или сигнал недостоверный).
     @Published var speedKmh: Double = 0
 
+    /// Направление движения в градусах (для режима «карта по движению»).
+    @Published var course: CLLocationDirection = 0
+
+    /// Счётчик обновлений — удобно слушать через onChange (координата не Equatable).
+    @Published var updateTick: Int = 0
+
     /// Статус разрешения на геолокацию.
     @Published var authorizationStatus: CLAuthorizationStatus
 
@@ -55,6 +61,11 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
         // location.speed в м/с; отрицательное значение = недостоверно.
         let speed = max(location.speed, 0)
         speedKmh = speed * 3.6
+
+        // course = направление движения; -1 означает недостоверно.
+        if location.course >= 0 { course = location.course }
+
+        updateTick &+= 1
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
